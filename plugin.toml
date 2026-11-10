@@ -1,0 +1,26 @@
+name = "thinking-tags"
+version = "0.1.0"
+category = "extension"
+entry = "main:apply"
+description = "Wrap native Claude and OpenAI reasoning streams/blocks in <thinking> tags, extract inline <think>/<thinking> tags into response.thinking, and strip thinking blocks in fast_ask without modifying GenericAgent."
+description_zh = "将 Claude 与 OpenAI 原生推理块及流式推理增量包裹为 <thinking> 标签，从正文中提取内联 <think>/<thinking> 标签至 thinking 字段，并清理 fast_ask 输出中的思考块（无需修改 GenericAgent 源码）。"
+inject = ["ga.agent", "ga.hooks"]
+provides = []
+
+[settings.wrap_native_reasoning]
+type = "bool"
+default = true
+description = "Wrap native Claude (thinking_delta / thinking block) and OpenAI (reasoning_content / Responses API reasoning) output in <thinking>...</thinking> tags"
+description_zh = "将 Claude（thinking_delta / thinking 块）与 OpenAI（reasoning_content / Responses API 推理）原生推理输出自动包裹为 <thinking>...</thinking> 标签"
+
+[settings.extract_inline_thinking]
+type = "bool"
+default = true
+description = "Extract inline <think>...</think> and <thinking>...</thinking> tags from text responses into response.thinking and strip them from response.content"
+description_zh = "从文本回复中提取内联 <think>...</think> 与 <thinking>...</thinking> 标签至 response.thinking，并从正文中剥离"
+
+[settings.strip_fast_ask_thinking]
+type = "bool"
+default = true
+description = "Strip <think> and <thinking> blocks from llmcore.fast_ask() return values"
+description_zh = "从 llmcore.fast_ask() 返回值中剥离 <think> 与 <thinking> 思考块"
