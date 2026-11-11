@@ -41,6 +41,6 @@ git clone https://github.com/Fwind43/gah-plugin-thinking-tags ~/.ga-harness/plug
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
-| `wrap_native_reasoning` | `bool` | `true` | Wrap native Claude/OpenAI reasoning blocks and SSE deltas in `<thinking>...</thinking>` tags |
-| `extract_inline_thinking` | `bool` | `true` | Extract inline `<think>` / `<thinking>` tags from text responses into `response.thinking` |
-| `strip_fast_ask_thinking` | `bool` | `true` | Strip `<think>` / `<thinking>` blocks from `llmcore.fast_ask()` return values |
+| `wrap_native_reasoning` | `boolean` | `true` | Wrap native Claude/OpenAI reasoning blocks and SSE deltas in `<thinking>...</thinking>` tags |
+| `extract_inline_thinking` | `boolean` | `true` | Extract inline `<think>` / `<thinking>` tags from text responses into `response.thinking` |
+| `strip_fast_ask_thinking` | `boolean` | `true` | Strip `<think>` / `<thinking>` blocks from `llmcore.fast_ask()` return values |

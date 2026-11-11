@@ -34,10 +34,15 @@ _OPENAI_PULSE_SSE = (
 )
 
 
-def _setting(ctx: Any, key: str, default: bool = True) -> bool:
-    settings = getattr(ctx, "settings", None)
-    if isinstance(settings, dict) and key in settings:
-        return bool(settings[key])
+def _setting(
+    ctx: Any, config: dict[str, Any] | None, key: str, default: bool = True
+) -> bool:
+    if isinstance(config, dict) and key in config:
+        return bool(config[key])
+    for attr in ("config", "settings"):
+        cfg = getattr(ctx, attr, None)
+        if isinstance(cfg, dict) and key in cfg:
+            return bool(cfg[key])
     return default
 
 
@@ -572,26 +577,24 @@ def _make_fast_ask(orig: Callable, enabled_fn: Callable[[], bool]) -> Callable:
     return fast_ask
 
 
-def _resolve_llmcore(agent: Any) -> Any:
+def _resolve_llmcore(ctx: Any = None) -> Any:
     mod = sys.modules.get("llmcore")
     if mod is not None:
         return mod
+    agent = ctx.get("ga.agent") if hasattr(ctx, "get") else None
     client = getattr(agent, "llm_client", None)
     if client is not None:
         return sys.modules.get(type(client).__module__)
     return None
 
 
-def apply(ctx) -> None:
-    agent = ctx.get("ga.agent") if hasattr(ctx, "get") else None
-    hooks = ctx.get("ga.hooks") if hasattr(ctx, "get") else None
-    mod = _resolve_llmcore(agent)
+def apply(ctx: Any, config: dict[str, Any] | None = None) -> None:
+    wrap_enabled = lambda: _setting(ctx, config, "wrap_native_reasoning", True)
+    extract_enabled = lambda: _setting(ctx, config, "extract_inline_thinking", True)
+    strip_fast_enabled = lambda: _setting(ctx, config, "strip_fast_ask_thinking", True)
 
-    wrap_enabled = lambda: _setting(ctx, "wrap_native_reasoning", True)
-    extract_enabled = lambda: _setting(ctx, "extract_inline_thinking", True)
-    strip_fast_enabled = lambda: _setting(ctx, "strip_fast_ask_thinking", True)
-
-    saved_attrs: list[tuple[Any, str, Any]] = []
+    saved_attrs: list[tuple[Any, str, Any, Any]] = []
+    patched_mods: set[int] = set()
 
     def _patch(target: Any, attr: str, factory: Callable[[Any], Any]) -> None:
         orig = getattr(target, attr, None)
@@ -599,41 +602,75 @@ def apply(ctx) -> None:
             return
         wrapped = factory(orig)
         setattr(target, attr, wrapped)
-        saved_attrs.append((target, attr, orig))
+        saved_attrs.append((target, attr, orig, wrapped))
 
-    if mod is not None:
+    def _install() -> Any:
+        mod = _resolve_llmcore(ctx)
+        if mod is None:
+            return None
+        if id(mod) in patched_mods:
+            return mod
+        patched_mods.add(id(mod))
         _patch(mod, "_parse_claude_json", lambda f: _make_parse_claude_json(f, wrap_enabled))
         _patch(mod, "_parse_claude_sse", lambda f: _make_parse_claude_sse(f, wrap_enabled))
         _patch(mod, "_parse_openai_json", lambda f: _make_parse_openai_json(f, wrap_enabled))
         _patch(mod, "_parse_openai_sse", lambda f: _make_parse_openai_sse(f, wrap_enabled))
         _patch(mod, "fast_ask", lambda f: _make_fast_ask(f, strip_fast_enabled))
 
-        for cls_name in ("NativeClaudeSession", "OpenAISession", "LLMSession"):
+        for cls_name in (
+            "NativeClaudeSession",
+            "NativeOAISession",
+            "OpenAISession",
+        ):
             sess_cls = getattr(mod, cls_name, None)
-            if sess_cls is not None:
+            if sess_cls is not None and "ask" in getattr(sess_cls, "__dict__", {}):
                 _patch(
                     sess_cls,
                     "ask",
-                    lambda f: _make_native_ask(f, mod, extract_enabled),
+                    lambda f, m=mod: _make_native_ask(f, m, extract_enabled),
                 )
+        return mod
 
-    if hooks is not None and hasattr(hooks, "on"):
-        def _on_llm_after(*args):
-            if not extract_enabled() or not args:
-                return
-            resp = args[-1]
-            _extract_inline_thinking_from_response(resp, mod)
-
-        hooks.on("llm_after", _on_llm_after)
-
-    if hasattr(ctx, "scope") and saved_attrs:
-        def _restore():
-            for target, attr, orig in reversed(saved_attrs):
-                try:
+    def _restore() -> None:
+        for target, attr, orig, wrapped in reversed(saved_attrs):
+            try:
+                if getattr(target, attr, None) is wrapped:
                     setattr(target, attr, orig)
-                except Exception:
-                    pass
+            except Exception:
+                pass
+        saved_attrs.clear()
+        patched_mods.clear()
 
+    _install()
+
+    if hasattr(ctx, "on"):
+        def _on_before(gactx: Any, nxt: Callable[[Any], Any]) -> Any:
+            _install()
+            return nxt(gactx)
+
+        def _on_llm_after(gactx: Any, nxt: Callable[[Any], Any]) -> Any:
+            mod = _install()
+            if extract_enabled() and isinstance(gactx, dict):
+                resp = gactx.get("response")
+                if resp is not None:
+                    gactx["response"] = _extract_inline_thinking_from_response(resp, mod)
+            return nxt(gactx)
+
+        ctx.on("ga.agent_before", _on_before, priority=10)
+        ctx.on("ga.llm_before", _on_before, priority=10)
+        ctx.on("ga.llm_after", _on_llm_after, priority=10)
+    else:
+        hooks = ctx.get("ga.hooks") if hasattr(ctx, "get") else None
+        if hooks is not None and hasattr(hooks, "on"):
+            def _legacy_llm_after(*args: Any) -> None:
+                mod = _install()
+                if not extract_enabled() or not args:
+                    return
+                _extract_inline_thinking_from_response(args[-1], mod)
+
+            hooks.on("llm_after", _legacy_llm_after)
+
+    if hasattr(ctx, "scope"):
         if callable(ctx.scope):
             ctx.scope(_restore)
         elif hasattr(ctx.scope, "add"):
